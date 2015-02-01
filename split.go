@@ -20,6 +20,7 @@ package utf8split // "github.com/jsipprell/go-utf8split"
 import (
 	"bytes"
 	"log"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -27,6 +28,51 @@ import (
 
 type Splitter struct {
 	ranges []*unicode.RangeTable
+}
+
+type sortableRange32 []unicode.Range32
+type sortableRange16 []unicode.Range16
+
+func (r sortableRange32) Len() int {
+	return len(r)
+}
+
+func (r sortableRange32) Less(i, j int) bool {
+	if r[i].Lo < r[j].Lo {
+		return true
+	}
+	return r[i].Hi < r[j].Hi
+}
+
+func (r sortableRange32) Swap(i, j int) {
+	r[i], r[j] = r[j], r[i]
+}
+
+func (r sortableRange16) Len() int {
+	return len(r)
+}
+
+func (r sortableRange16) Less(i, j int) bool {
+	if r[i].Lo < r[j].Lo {
+		return true
+	}
+	return r[i].Hi < r[j].Hi
+}
+
+func (r sortableRange16) Swap(i, j int) {
+	r[i], r[j] = r[j], r[i]
+}
+
+func sort32(range32 []unicode.Range32, R32 ...unicode.Range32) []unicode.Range32 {
+	R := append(range32, R32...)
+	sort.Stable(sortableRange32(R))
+	return R
+}
+
+func sort16(range16 []unicode.Range16, R16 ...unicode.Range16) []unicode.Range16 {
+	R := append(range16, R16...)
+	sort.Stable(sortableRange16(R))
+	return R
 }
 
 func insertRune(rt *unicode.RangeTable, r rune) *unicode.RangeTable {
@@ -45,7 +91,7 @@ func insertRune(rt *unicode.RangeTable, r rune) *unicode.RangeTable {
 				}
 			}
 		}
-		rt.R32 = append(rt.R32, unicode.Range32{Lo: r32, Hi: r32, Stride: 1})
+		rt.R32 = sort32(rt.R32, unicode.Range32{Lo: r32, Hi: r32, Stride: 1})
 	} else {
 		r16 := uint16(r)
 		if uint32(r) <= unicode.MaxLatin1 {
@@ -111,6 +157,16 @@ func makeStringRangeTable(seps ...string) (rt *unicode.RangeTable) {
 	return
 }
 
+func sortRangeTable(rt *unicode.RangeTable) *unicode.RangeTable {
+	if len(rt.R32) > 0 {
+		rt.R32 = sort32(rt.R32)
+	}
+	if len(rt.R16) > 0 {
+		rt.R16 = sort16(rt.R16)
+	}
+	return rt
+}
+
 func makeRangeTable(seps ...[]byte) *unicode.RangeTable {
 	return addRangeTable(new(unicode.RangeTable), seps...)
 }
@@ -118,13 +174,13 @@ func makeRangeTable(seps ...[]byte) *unicode.RangeTable {
 // Returns a new Splitter which will split strings or byte
 // slices by utf8 delimiters, specified as []byte slices.
 func New(seps ...[]byte) *Splitter {
-	return &Splitter{[]*unicode.RangeTable{makeRangeTable(seps...)}}
+	return &Splitter{[]*unicode.RangeTable{sortRangeTable(makeRangeTable(seps...))}}
 }
 
 // Returns a new Splitter which will split strings or byte
 // slices by utf8 deliiters, specified as strings
 func WithDelimiters(seps ...string) *Splitter {
-	return &Splitter{[]*unicode.RangeTable{makeStringRangeTable(seps...)}}
+	return &Splitter{[]*unicode.RangeTable{sortRangeTable(makeStringRangeTable(seps...))}}
 }
 
 // Returns true if a rune is one of the separators handled by the splitter
@@ -176,6 +232,7 @@ func Bytes(src []byte, delims []byte, addl ...[]byte) [][]byte {
 		rangeTable = addRangeTable(rangeTable, addl...)
 	}
 	if len(rangeTable.R16)+len(rangeTable.R32) > 0 {
+		sortRangeTable(rangeTable)
 		return bytes.FieldsFunc(src, func(r rune) bool {
 			return unicode.In(r, rangeTable)
 		})
@@ -192,6 +249,7 @@ func Strings(src string, delims string, addl ...string) []string {
 		rangeTable = addRangeTable(rangeTable, []byte(s))
 	}
 	if len(rangeTable.R16)+len(rangeTable.R32) > 0 {
+		sortRangeTable(rangeTable)
 		return strings.FieldsFunc(src, func(r rune) bool {
 			return unicode.In(r, rangeTable)
 		})
